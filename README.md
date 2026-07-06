@@ -13,4 +13,4 @@ An interactive, responsive birthday celebration webpage.
 - **Procedural Chime Music** toggleable via a button.
 
 ## How to Run
-Simply double-click or open [start.html](start.html) in any modern web browser.
+Simply double-click or open [index.html](index.html) in any modern web browser.
