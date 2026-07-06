@@ -1,0 +1,7 @@
+# Ignore all files by default in this workspace directory
+*
+
+# Allow only these specific project files
+!start.html
+!README.md
+!.gitignore
