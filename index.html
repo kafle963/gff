@@ -132,6 +132,10 @@ body{
   background:linear-gradient(180deg,#c8a8f8,#9060d0);
   border-radius:3px;cursor:pointer;
 }
+.candle-s::after{
+  content:'';position:absolute;
+  top:-20px;left:-15px;right:-15px;bottom:-10px;
+}
 .candle-s .wick{
   position:absolute;top:-6px;left:50%;transform:translateX(-50%);
   width:2px;height:7px;background:#4a3226;
@@ -398,7 +402,7 @@ body{
       </div>
     </div>
   </div>
-  <p class="blow-hint" id="blowHint">tap any candle to blow it out 🕯️</p>
+  <p class="blow-hint" id="blowHint">blow into your mic or tap a candle 🕯️</p>
   <div class="wish-text" id="wishText">
     <h2>Your wish is sent to the stars ⭐</h2>
     <p>May every good thing you've ever wished for find its way back to you this year.</p>
@@ -558,6 +562,7 @@ function goTo(n){
   next.style.display='flex';
   currentPage=n;
   updateDots(n);updateProgress(n);
+  if(n===2)initMicBlow();
   if(n===3)startTypewriter();
   if(n===5)startGame();
   if(n===6)startFireworks();
@@ -572,6 +577,27 @@ document.getElementById('envelope').addEventListener('click',()=>{
 
 // ── PAGE 2: CANDLES ──
 let candlesOut=0;
+let micStream=null;
+
+function blowOutOneCandle(){
+  const activeCandles=document.querySelectorAll('.candle-s .fl:not(.out)');
+  if(activeCandles.length>0){
+    const fl=activeCandles[0];
+    fl.classList.add('out');
+    candlesOut++;
+    playTone(440+candlesOut*100,0.15);
+    if(candlesOut===3){
+      document.getElementById('blowHint').style.opacity='0';
+      launchConfetti(80,'rgba(255,200,100,',', 0.9)');
+      document.getElementById('wishText').classList.add('show');
+      setTimeout(()=>document.getElementById('toLetterBtn').classList.add('show'),1200);
+      if(micStream){
+        micStream.getTracks().forEach(track=>track.stop());
+      }
+    }
+  }
+}
+
 document.querySelectorAll('.candle-s').forEach(c=>{
   c.addEventListener('click',function(){
     const fl=this.querySelector('.fl');
@@ -584,10 +610,49 @@ document.querySelectorAll('.candle-s').forEach(c=>{
       launchConfetti(80,'rgba(255,200,100,',', 0.9)');
       document.getElementById('wishText').classList.add('show');
       setTimeout(()=>document.getElementById('toLetterBtn').classList.add('show'),1200);
+      if(micStream){
+        micStream.getTracks().forEach(track=>track.stop());
+      }
     }
   });
 });
 document.getElementById('toLetterBtn').addEventListener('click',()=>goTo(3));
+
+function initMicBlow(){
+  if(micStream)return; // Avoid double initialization
+  if(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia){
+    navigator.mediaDevices.getUserMedia({audio:true})
+      .then(stream=>{
+        micStream=stream;
+        const ctx=getAudioCtx();
+        const source=ctx.createMediaStreamSource(stream);
+        const analyser=ctx.createAnalyser();
+        analyser.fftSize=256;
+        source.connect(analyser);
+        const bufferLength=analyser.frequencyBinCount;
+        const dataArray=new Uint8Array(bufferLength);
+        let blowCooldown=false;
+        
+        function detectBlow(){
+          if(currentPage===2&&candlesOut<3){
+            analyser.getByteFrequencyData(dataArray);
+            let sum=0;
+            for(let i=0;i<bufferLength;i++)sum+=dataArray[i];
+            let avg=sum/bufferLength;
+            // Blow threshold: 45 (adjust for sensitivity)
+            if(avg>45&&!blowCooldown){
+              blowOutOneCandle();
+              blowCooldown=true;
+              setTimeout(()=>blowCooldown=false,400); // 400ms delay between blowing out candles
+            }
+            requestAnimationFrame(detectBlow);
+          }
+        }
+        detectBlow();
+      })
+      .catch(err=>console.log("Mic access not active or denied"));
+  }
+}
 
 // ── PAGE 3: TYPEWRITER ──
 const letter=`Dear Krishpa,\n\nOn this beautiful day, I want you to know something simple: you are one of the most remarkable people I have ever known.\n\nThe way you laugh, the way you care, the way you show up — all of it matters more than you realize. You make the ordinary feel like something worth celebrating.\n\nI hope this year brings you everything your heart has ever quietly wished for. The adventures you've been putting off. The peace you deserve. The moments that take your breath away.\n\nYou deserve all of it — every single bit.`;
@@ -757,30 +822,54 @@ function launchConfetti(n,colorPrefix,colorSuffix){
 
 // ── SIMPLE AUDIO ──
 function getAudioCtx(){if(!audioCtx)audioCtx=new(window.AudioContext||window.webkitAudioContext)();return audioCtx}
-function playTone(freq,vol){
+function playTone(freq,vol,dur){
   try{
     const ctx=getAudioCtx();
     const o=ctx.createOscillator();const g=ctx.createGain();
     o.connect(g);g.connect(ctx.destination);
     o.type='sine';o.frequency.value=freq;
+    const duration=dur||0.4;
     g.gain.setValueAtTime(vol||.1,ctx.currentTime);
-    g.gain.exponentialRampToValueAtTime(.001,ctx.currentTime+.4);
-    o.start();o.stop(ctx.currentTime+.4);
+    g.gain.exponentialRampToValueAtTime(.001,ctx.currentTime+duration);
+    o.start();o.stop(ctx.currentTime+duration);
   }catch(e){}
 }
 
-// ── MUSIC BTN (ambient chime loop) ──
-let musicInterval=null;
-const melody=[261,293,329,349,392,440,493,523];
+// ── MUSIC BTN (Happy Birthday melody loop) ──
+let musicTimeout=null;
+let currentNoteIndex=0;
+const tempo=380; // Base duration for a 1-beat note (ms)
+
+const hbMelody=[
+  {f:392.00,d:0.5},{f:392.00,d:0.5},{f:440.00,d:1.0},{f:392.00,d:1.0},{f:523.25,d:1.0},{f:493.88,d:2.0}, // Happy Birthday to you
+  {f:0,d:0.5},
+  {f:392.00,d:0.5},{f:392.00,d:0.5},{f:440.00,d:1.0},{f:392.00,d:1.0},{f:587.33,d:1.0},{f:523.25,d:2.0}, // Happy Birthday to you
+  {f:0,d:0.5},
+  {f:392.00,d:0.5},{f:392.00,d:0.5},{f:783.99,d:1.0},{f:659.25,d:1.0},{f:523.25,d:1.0},{f:493.88,d:1.0},{f:440.00,d:2.0}, // Happy Birthday dear Krishpa
+  {f:0,d:0.5},
+  {f:698.46,d:0.5},{f:698.46,d:0.5},{f:659.25,d:1.0},{f:523.25,d:1.0},{f:587.33,d:1.0},{f:523.25,d:2.0}, // Happy Birthday to you
+  {f:0,d:2.0}
+];
+
+function playBirthdaySong(){
+  if(!musicOn)return;
+  const note=hbMelody[currentNoteIndex];
+  if(note.f>0){
+    playTone(note.f,0.06,note.d*(tempo/1000));
+  }
+  currentNoteIndex=(currentNoteIndex+1)%hbMelody.length;
+  musicTimeout=setTimeout(playBirthdaySong,note.d*tempo);
+}
+
 document.getElementById('musicBtn').addEventListener('click',()=>{
   musicOn=!musicOn;
   document.getElementById('musicBtn').textContent=musicOn?'🔇':'🎵';
   if(musicOn){
-    let mi=0;
-    musicInterval=setInterval(()=>{
-      playTone(melody[mi%melody.length],.06);mi++;
-    },500);
-  }else{clearInterval(musicInterval)}
+    currentNoteIndex=0;
+    playBirthdaySong();
+  }else{
+    clearTimeout(musicTimeout);
+  }
 });
 
 // ── CSS fadeUp for game burst ──
